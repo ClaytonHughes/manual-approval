@@ -43,12 +43,16 @@ func newApprovalEnvironment(client *github.Client, repoFullName, repoOwner strin
 	}, nil
 }
 
-func (a approvalEnvironment) runURL() string {
+func (a approvalEnvironment) runURL(ctx context.Context) (string, error) {
+	wfrun, _, err := a.client.Actions.GetWorkflowRunByID(ctx, a.repoOwner, a.repo, int64(a.runID))
+	if err != nil {
+		return "could not get workflow run", err
+	}
 	baseUrl := a.client.BaseURL.String()
 	if strings.Contains(baseUrl, "github.com") {
 		baseUrl = "https://github.com/"
 	}
-	return fmt.Sprintf("%s%s/actions/runs/%d", baseUrl, a.repoFullName, a.runID)
+	return fmt.Sprintf("%s%s/actions/runs/%d %s", baseUrl, a.repoFullName, a.runID, wfrun.GetHTMLURL()), nil
 }
 
 func (a *approvalEnvironment) createApprovalIssue(ctx context.Context) error {
@@ -58,13 +62,18 @@ func (a *approvalEnvironment) createApprovalIssue(ctx context.Context) error {
 		issueTitle = fmt.Sprintf("%s: %s", issueTitle, a.issueTitle)
 	}
 
+	var err error
+	runUrl, err := a.runURL(ctx)
+	if err != nil {
+		return err
+	}
 	issueBody := fmt.Sprintf(`Workflow is pending manual review.
 URL: %s
 
 Required approvers: %s
 
 Respond %s to continue workflow or %s to cancel.`,
-		a.runURL(),
+		runUrl,
 		a.issueApprovers,
 		formatAcceptedWords(approvedWords),
 		formatAcceptedWords(deniedWords),
@@ -74,7 +83,6 @@ Respond %s to continue workflow or %s to cancel.`,
 		issueBody = fmt.Sprintf("%s\n\n%s", a.issueBody, issueBody)
 	}
 
-	var err error
 	fmt.Printf(
 		"Creating issue in repo %s/%s with the following content:\nTitle: %s\nApprovers: %s\nBody:\n%s\n",
 		a.repoOwner,
